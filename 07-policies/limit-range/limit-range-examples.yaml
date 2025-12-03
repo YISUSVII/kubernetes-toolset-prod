@@ -1,0 +1,51 @@
+# Limit Range Examples
+
+---
+# 1. DEFAULT REQUESTS & LIMITS
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mem-limit-range
+  namespace: default
+spec:
+  limits:
+  - default:
+      memory: 512Mi
+      cpu: 500m
+    defaultRequest:
+      memory: 256Mi
+      cpu: 200m
+    type: Container
+
+---
+# 2. MIN & MAX CONSTRAINTS
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-limit-range
+spec:
+  limits:
+  - max:
+      cpu: "2"
+      memory: 2Gi
+    min:
+      cpu: 200m
+      memory: 64Mi
+    type: Container
+
+---
+# 3. STORAGE LIMIT RANGE
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: storagelimits
+spec:
+  limits:
+  - type: PersistentVolumeClaim
+    max:
+      storage: 2Gi
+    min:
+      storage: 1Gi

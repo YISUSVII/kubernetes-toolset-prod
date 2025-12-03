@@ -1,0 +1,56 @@
+# ConfigMap Examples
+
+---
+# 1. SIMPLE KEY-VALUE PAIRS
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-settings
+  namespace: default
+data:
+  # Simple strings
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  MAX_RETRIES: "3"
+
+---
+# 2. CONFIGURATION FILE CONTENT
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: default
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    events {
+        worker_connections 1024;
+    }
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        server {
+            listen 80;
+            location / {
+                return 200 'Hello World!';
+            }
+        }
+    }
+
+---
+# 3. JSON CONFIGURATION
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+data:
+  flags.json: |
+    {
+      "newUI": true,
+      "betaFeatures": false,
+      "maxUploadSize": 1024
+    }

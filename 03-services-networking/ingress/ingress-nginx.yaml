@@ -1,0 +1,235 @@
+# Ingress Controller must be installed first
+# For NGINX: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+
+---
+# TLS Secret (create from actual certificates)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret
+  namespace: production
+type: kubernetes.io/tls
+data:
+  # Base64 encoded certificate and key
+  # Generate with: kubectl create secret tls tls-secret --cert=path/to/tls.crt --key=path/to/tls.key
+  tls.crt: LS0tLS1CRUdJTi...  # Your certificate
+  tls.key: LS0tLS1CRUdJTi...  # Your private key
+
+---
+# Ingress Resource with multiple hosts and paths
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webapp-ingress
+  namespace: production
+  annotations:
+    # Ingress class
+    kubernetes.io/ingress.class: "nginx"
+    
+    # SSL/TLS
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "10"
+    
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://example.com"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    
+    # Body size
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    
+    # Custom headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    
+    # Whitelist IPs (optional)
+    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12"
+    
+    # Authentication (optional)
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: basic-auth
+    # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required'
+    
+    # Rewrite rules
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    
+    # Load balancing
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+    nginx.ingress.kubernetes.io/load-balance: "ewma"  # Exponentially Weighted Moving Average
+    
+    # Session affinity
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: "Strict"
+
+spec:
+  # TLS configuration
+  tls:
+  - hosts:
+    - www.example.com
+    - api.example.com
+    - admin.example.com
+    secretName: tls-secret
+  
+  # Routing rules
+  rules:
+  # Main website
+  - host: www.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+  
+  # API endpoints
+  - host: api.example.com
+    http:
+      paths:
+      # API v1
+      - path: /v1(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-v1-service
+            port:
+              number: 8080
+      
+      # API v2
+      - path: /v2(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-v2-service
+            port:
+              number: 8080
+      
+      # Health check endpoint
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: api-v2-service
+            port:
+              number: 8080
+  
+  # Admin panel
+  - host: admin.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 3000
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: production
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# API v1 Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-v1-service
+  namespace: production
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+    version: v1
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# API v2 Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-v2-service
+  namespace: production
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+    version: v2
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# Admin Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+  namespace: production
+spec:
+  type: ClusterIP
+  selector:
+    app: admin
+  ports:
+  - port: 3000
+    targetPort: 3000
+
+---
+# IngressClass (if needed)
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: k8s.io/ingress-nginx
+
+---
+# Certificate Issuer (cert-manager)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx

@@ -1,0 +1,357 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-production
+  namespace: production
+  labels:
+    app: webapp
+    version: v1.2.3
+    environment: production
+    team: platform
+  annotations:
+    kubernetes.io/change-cause: "Update to version 1.2.3 with security patches"
+spec:
+  # Number of desired pods
+  replicas: 3
+  
+  # Revision history limit
+  revisionHistoryLimit: 10
+  
+  # Selector for pods
+  selector:
+    matchLabels:
+      app: webapp
+      environment: production
+  
+  # Deployment strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Max number of pods above desired count during update
+      maxUnavailable: 0  # Max number of pods unavailable during update (ensures zero downtime)
+  
+  # Minimum time for pod to be ready
+  minReadySeconds: 10
+  
+  # Time to wait before considering deployment failed
+  progressDeadlineSeconds: 600
+  
+  # Pod template
+  template:
+    metadata:
+      labels:
+        app: webapp
+        version: v1.2.3
+        environment: production
+        team: platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Service account for pod
+      serviceAccountName: webapp-sa
+      
+      # Security context for all containers
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Init containers
+      initContainers:
+      - name: init-db-check
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Checking database connectivity..."
+          until nc -z postgres-service 5432; do
+            echo "Waiting for database..."
+            sleep 2
+          done
+          echo "Database is ready!"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+      
+      # Application containers
+      containers:
+      - name: webapp
+        image: myregistry.io/webapp:1.2.3
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        
+        # Environment variables
+        env:
+        - name: APP_ENV
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: PORT
+          value: "8080"
+        
+        # Environment from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: webapp-config
+        - secretRef:
+            name: webapp-secrets
+        
+        # Resource management
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+            httpHeaders:
+            - name: X-Probe-Type
+              value: liveness
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Readiness probe
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+            httpHeaders:
+            - name: X-Probe-Type
+              value: readiness
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup probe
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: http
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        
+        # Lifecycle hooks
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: cache
+          mountPath: /app/cache
+        - name: logs
+          mountPath: /app/logs
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+      
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: webapp-config
+          defaultMode: 0644
+      - name: cache
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: logs
+        emptyDir:
+          sizeLimit: 2Gi
+      
+      # Pod scheduling
+      affinity:
+        # Prefer to spread pods across different nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - webapp
+              topologyKey: kubernetes.io/hostname
+      
+      # Tolerations
+      tolerations:
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      - key: "node.kubernetes.io/unreachable"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      
+      # DNS configuration
+      dnsPolicy: ClusterFirst
+      
+      # Restart policy
+      restartPolicy: Always
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+      
+      # Image pull secrets
+      imagePullSecrets:
+      - name: registry-credentials
+
+---
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-config
+  namespace: production
+data:
+  DATABASE_HOST: "postgres-service"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "webapp_db"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  CACHE_TTL: "3600"
+  MAX_CONNECTIONS: "100"
+
+---
+# Secret (base64 encoded values)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webapp-secrets
+  namespace: production
+type: Opaque
+data:
+  DATABASE_PASSWORD: cGFzc3dvcmQxMjM=  # password123
+  API_KEY: YXBpa2V5MTIzNDU2Nzg5MA==      # apikey1234567890
+  JWT_SECRET: and0c2VjcmV0a2V5MTIzNDU2Nzg5MA==  # jwtsecretkey1234567890
+
+---
+# Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webapp-sa
+  namespace: production
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service
+  namespace: production
+  labels:
+    app: webapp
+spec:
+  type: ClusterIP
+  selector:
+    app: webapp
+    environment: production
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webapp-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webapp-production
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max
+
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webapp-pdb
+  namespace: production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: webapp
+      environment: production

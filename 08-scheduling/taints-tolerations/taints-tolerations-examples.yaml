@@ -1,0 +1,45 @@
+# Taints and Tolerations Examples
+
+---
+# 1. POD WITH TOLERATION
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    env: test
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    imagePullPolicy: IfNotPresent
+  
+  tolerations:
+  # Tolerate "dedicated=experimental:NoSchedule" taint
+  - key: "dedicated"
+    operator: "Equal"
+    value: "experimental"
+    effect: "NoSchedule"
+  
+  # Tolerate any taint with key "gpu"
+  - key: "gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+---
+# 2. EVICTION TOLERATION (Time-based)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: toleration-seconds
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+  tolerations:
+  - key: "node.kubernetes.io/unreachable"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 6000 # Stay for 6000s after node becomes unreachable

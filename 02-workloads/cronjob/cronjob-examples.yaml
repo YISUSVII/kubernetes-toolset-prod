@@ -1,0 +1,467 @@
+# CronJob Examples - Scheduled Tasks
+
+---
+# 1. DATABASE BACKUP CRONJOB
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: production
+  labels:
+    app: backup
+    type: database
+spec:
+  # Schedule: Every day at 2 AM
+  schedule: "0 2 * * *"
+  
+  # Timezone (requires Kubernetes 1.25+)
+  timeZone: "America/New_York"
+  
+  # Keep last 3 successful and 1 failed job
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  
+  # Concurrency policy
+  concurrencyPolicy: Forbid  # Don't run if previous job still running
+  
+  # Start deadline - job must start within 1 hour of scheduled time
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    spec:
+      # Backoff limit for retries
+      backoffLimit: 3
+      
+      # Active deadline - job must complete within 1 hour
+      activeDeadlineSeconds: 3600
+      
+      template:
+        metadata:
+          labels:
+            app: backup
+            type: database
+        spec:
+          restartPolicy: OnFailure
+          
+          serviceAccountName: backup-sa
+          
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BACKUP_FILE="/backups/postgres-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+              echo "Starting backup to $BACKUP_FILE"
+              
+              pg_dump -h $POSTGRES_HOST \
+                      -U $POSTGRES_USER \
+                      -d $POSTGRES_DB \
+                      | gzip > $BACKUP_FILE
+              
+              echo "Backup completed: $BACKUP_FILE"
+              
+              # Upload to S3 (example)
+              # aws s3 cp $BACKUP_FILE s3://my-backups/postgres/
+              
+              # Clean up old backups (keep last 7 days)
+              find /backups -name "postgres-backup-*.sql.gz" -mtime +7 -delete
+              
+              echo "Backup job finished successfully"
+            
+            env:
+            - name: POSTGRES_HOST
+              value: "postgres-service"
+            - name: POSTGRES_DB
+              value: "webapp_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+            
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+            
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+          
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# 2. LOG CLEANUP CRONJOB
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: log-cleanup
+  namespace: production
+spec:
+  # Every Sunday at 3 AM
+  schedule: "0 3 * * 0"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Replace
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cleanup
+            image: busybox:1.35
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Cleaning up old logs..."
+              find /var/log -name "*.log" -mtime +30 -delete
+              find /var/log -name "*.gz" -mtime +90 -delete
+              echo "Cleanup completed"
+            
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+            
+            volumeMounts:
+            - name: logs
+              mountPath: /var/log
+          
+          volumes:
+          - name: logs
+            hostPath:
+              path: /var/log
+              type: Directory
+
+---
+# 3. CERTIFICATE RENEWAL CHECK
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cert-renewal-check
+  namespace: production
+spec:
+  # Every day at 6 AM
+  schedule: "0 6 * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: cert-checker-sa
+          
+          containers:
+          - name: cert-checker
+            image: alpine:3.18
+            command:
+            - /bin/sh
+            - -c
+            - |
+              apk add --no-cache openssl curl
+              
+              echo "Checking certificate expiration..."
+              
+              DOMAIN="example.com"
+              EXPIRY_DATE=$(echo | openssl s_client -servername $DOMAIN \
+                           -connect $DOMAIN:443 2>/dev/null | \
+                           openssl x509 -noout -enddate | cut -d= -f2)
+              
+              EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+              CURRENT_EPOCH=$(date +%s)
+              DAYS_LEFT=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+              
+              echo "Certificate expires in $DAYS_LEFT days"
+              
+              if [ $DAYS_LEFT -lt 30 ]; then
+                echo "WARNING: Certificate expires soon!"
+                # Send alert (example: webhook)
+                curl -X POST https://alerts.example.com/webhook \
+                     -H "Content-Type: application/json" \
+                     -d "{\"message\": \"Certificate expires in $DAYS_LEFT days\"}"
+              fi
+            
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+
+---
+# 4. METRICS AGGREGATION
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: metrics-aggregation
+  namespace: monitoring
+spec:
+  # Every hour
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: aggregator
+            image: myregistry.io/metrics-aggregator:1.0.0
+            command:
+            - /app/aggregate
+            - --period=1h
+            - --output=/data/metrics
+            
+            env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-service:9090"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: metrics-db-secret
+                  key: url
+            
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+            
+            volumeMounts:
+            - name: metrics-data
+              mountPath: /data
+          
+          volumes:
+          - name: metrics-data
+            persistentVolumeClaim:
+              claimName: metrics-pvc
+
+---
+# 5. CACHE WARMUP
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cache-warmup
+  namespace: production
+spec:
+  # Every 6 hours
+  schedule: "0 */6 * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 1
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: warmup
+            image: myregistry.io/cache-warmup:1.0.0
+            command:
+            - /app/warmup
+            - --redis-host=redis-service
+            - --redis-port=6379
+            
+            env:
+            - name: API_ENDPOINT
+              value: "http://api-service:8080"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "200m"
+
+---
+# 6. REPORT GENERATION
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-report
+  namespace: production
+spec:
+  # Every day at 8 AM
+  schedule: "0 8 * * *"
+  timeZone: "America/New_York"
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: report-generator
+            image: myregistry.io/report-generator:1.0.0
+            command:
+            - python
+            - /app/generate_report.py
+            - --date=$(date -d "yesterday" +%Y-%m-%d)
+            - --output=/reports
+            
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: url
+            - name: SMTP_HOST
+              value: "smtp.example.com"
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-secret
+                  key: username
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-secret
+                  key: password
+            - name: REPORT_RECIPIENTS
+              value: "team@example.com"
+            
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "500m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+            
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+          
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: reports-pvc
+
+---
+# 7. DATA SYNC JOB
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-sync
+  namespace: production
+spec:
+  # Every 15 minutes
+  schedule: "*/15 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      
+      template:
+        spec:
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: sync
+            image: myregistry.io/data-sync:1.0.0
+            command:
+            - /app/sync
+            - --source=primary-db
+            - --target=replica-db
+            - --incremental
+            
+            env:
+            - name: SOURCE_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: source-db-secret
+                  key: url
+            - name: TARGET_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: target-db-secret
+                  key: url
+            
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+
+---
+# ServiceAccount for backup jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-sa
+  namespace: production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cert-checker-sa
+  namespace: production
+
+---
+# PVC for backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: production
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard

@@ -1,0 +1,432 @@
+# RBAC Examples for Different Use Cases
+
+---
+# 1. DEVELOPER ROLE - Development Namespace
+---
+# Role: Full access to development namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: development
+rules:
+# Full access to common resources
+- apiGroups: ["", "apps", "batch"]
+  resources:
+  - pods
+  - pods/log
+  - pods/exec
+  - services
+  - deployments
+  - replicasets
+  - statefulsets
+  - daemonsets
+  - jobs
+  - cronjobs
+  - configmaps
+  - secrets
+  - persistentvolumeclaims
+  verbs: ["*"]
+
+# Read access to namespaces
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+
+# Access to ingress
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["*"]
+
+---
+# RoleBinding: Bind developer role to developers group
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-binding
+  namespace: development
+subjects:
+- kind: Group
+  name: developers
+  apiGroup: rbac.authorization.k8s.io
+- kind: User
+  name: john@example.com
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: developer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 2. DEVELOPER ROLE - Production Namespace (Read-Only)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer-readonly
+  namespace: production
+rules:
+# Read-only access to resources
+- apiGroups: ["", "apps", "batch"]
+  resources:
+  - pods
+  - pods/log
+  - services
+  - deployments
+  - replicasets
+  - statefulsets
+  - jobs
+  - cronjobs
+  - configmaps
+  verbs: ["get", "list", "watch"]
+
+# NO access to secrets in production
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: []
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-readonly-binding
+  namespace: production
+subjects:
+- kind: Group
+  name: developers
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: developer-readonly
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 3. CI/CD SERVICE ACCOUNT
+---
+# ServiceAccount for CI/CD pipeline
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cicd-deployer
+  namespace: production
+
+---
+# Role: Deploy and update applications
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cicd-deployer
+  namespace: production
+rules:
+# Manage deployments
+- apiGroups: ["apps"]
+  resources:
+  - deployments
+  - replicasets
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+# Manage services
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "create", "update", "patch"]
+
+# Manage configmaps
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "create", "update", "patch"]
+
+# Read secrets (but not create/delete)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+
+# View pods and logs
+- apiGroups: [""]
+  resources:
+  - pods
+  - pods/log
+  verbs: ["get", "list", "watch"]
+
+# Manage ingress
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "create", "update", "patch"]
+
+# Check rollout status
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cicd-deployer-binding
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: cicd-deployer
+  namespace: production
+roleRef:
+  kind: Role
+  name: cicd-deployer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 4. MONITORING SERVICE ACCOUNT (Cluster-wide)
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+
+---
+# ClusterRole: Read metrics from all namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+# Read pods, nodes, services across cluster
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+
+# Read deployments, statefulsets, daemonsets
+- apiGroups: ["apps"]
+  resources:
+  - deployments
+  - statefulsets
+  - daemonsets
+  - replicasets
+  verbs: ["get", "list", "watch"]
+
+# Read ingresses
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+
+# Access to metrics
+- nonResourceURLs:
+  - /metrics
+  - /metrics/cadvisor
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: prometheus
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 5. APPLICATION SERVICE ACCOUNT
+---
+# ServiceAccount for application pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webapp-sa
+  namespace: production
+
+---
+# Role: Minimal permissions for application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: webapp-role
+  namespace: production
+rules:
+# Read own configmaps
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["webapp-config"]  # Specific ConfigMap only
+  verbs: ["get", "watch"]
+
+# Read own secrets
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["webapp-secrets"]  # Specific Secret only
+  verbs: ["get"]
+
+# List pods (for service discovery)
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+
+# Read services
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: webapp-binding
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: webapp-sa
+  namespace: production
+roleRef:
+  kind: Role
+  name: webapp-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 6. CLUSTER ADMIN (Use with extreme caution!)
+---
+# ClusterRoleBinding: Grant cluster-admin to specific users
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-admin-binding
+subjects:
+- kind: User
+  name: admin@example.com
+  apiGroup: rbac.authorization.k8s.io
+- kind: Group
+  name: cluster-admins
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin  # Built-in role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 7. NAMESPACE ADMIN
+---
+# Role: Full control over a namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: namespace-admin
+  namespace: production
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: namespace-admin-binding
+  namespace: production
+subjects:
+- kind: User
+  name: team-lead@example.com
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: namespace-admin
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 8. VIEW-ONLY ROLE (Cluster-wide)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: view-only-binding
+subjects:
+- kind: Group
+  name: viewers
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: view  # Built-in role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 9. SECURITY AUDITOR
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-auditor
+rules:
+# Read all resources
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+
+# Read cluster-level resources
+- nonResourceURLs: ["*"]
+  verbs: ["get"]
+
+# NO write permissions at all
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-auditor-binding
+subjects:
+- kind: User
+  name: auditor@example.com
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: security-auditor
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 10. BACKUP SERVICE ACCOUNT
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-sa
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backup-role
+rules:
+# Read all resources for backup
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+
+# Access to persistent volumes
+- apiGroups: [""]
+  resources:
+  - persistentvolumes
+  - persistentvolumeclaims
+  verbs: ["get", "list", "create", "delete"]
+
+# Create volume snapshots
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots"]
+  verbs: ["get", "list", "create", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backup-binding
+subjects:
+- kind: ServiceAccount
+  name: backup-sa
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io

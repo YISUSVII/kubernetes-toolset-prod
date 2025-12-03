@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webapp-with-probes
+  labels:
+    app: webapp
+    environment: production
+spec:
+  containers:
+  - name: webapp
+    image: nginx:1.21-alpine
+    ports:
+    - containerPort: 80
+      name: http
+      protocol: TCP
+    
+    # Resource Management
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "250m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
+    
+    # Environment Variables
+    env:
+    - name: APP_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "info"
+    
+    # Liveness Probe - Checks if container is alive
+    # If fails, kubelet kills the container and restarts it
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 80
+        httpHeaders:
+        - name: Custom-Header
+          value: Awesome
+      initialDelaySeconds: 30  # Wait before first check
+      periodSeconds: 10         # Check every 10 seconds
+      timeoutSeconds: 5         # Timeout for each check
+      successThreshold: 1       # Consecutive successes to be considered healthy
+      failureThreshold: 3       # Consecutive failures before restart
+    
+    # Readiness Probe - Checks if container is ready to serve traffic
+    # If fails, removes pod from service endpoints
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      successThreshold: 1
+      failureThreshold: 3
+    
+    # Startup Probe - For slow-starting containers
+    # Disables liveness and readiness until this succeeds
+    startupProbe:
+      httpGet:
+        path: /startup
+        port: 80
+      initialDelaySeconds: 0
+      periodSeconds: 10
+      timeoutSeconds: 3
+      successThreshold: 1
+      failureThreshold: 30  # 30 * 10 = 300 seconds max startup time
+    
+    # Lifecycle Hooks
+    lifecycle:
+      postStart:
+        exec:
+          command: ["/bin/sh", "-c", "echo 'Container started' > /tmp/started"]
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "nginx -s quit; while killall -0 nginx; do sleep 1; done"]
+    
+    # Volume Mounts
+    volumeMounts:
+    - name: config
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    - name: cache
+      mountPath: /var/cache/nginx
+  
+  # Security Context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    fsGroup: 101
+  
+  # Volumes
+  volumes:
+  - name: config
+    configMap:
+      name: nginx-config
+  - name: cache
+    emptyDir: {}
+
+---
+# ConfigMap for nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /healthz {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /ready {
+            access_log off;
+            return 200 "ready\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location /startup {
+            access_log off;
+            return 200 "started\n";
+            add_header Content-Type text/plain;
+        }
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }

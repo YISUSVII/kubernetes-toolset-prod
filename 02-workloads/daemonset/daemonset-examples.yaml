@@ -1,0 +1,497 @@
+# DaemonSet Examples - Node-level Services
+
+---
+# 1. LOG COLLECTOR (Fluentd)
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: kube-system
+  labels:
+    app: fluentd
+    tier: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  
+  template:
+    metadata:
+      labels:
+        app: fluentd
+        tier: logging
+    spec:
+      serviceAccountName: fluentd
+      
+      # Tolerate all taints to run on all nodes
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      - operator: Exists
+        effect: NoSchedule
+      
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+        
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch.logging.svc.cluster.local"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        - name: FLUENT_ELASTICSEARCH_SCHEME
+          value: "http"
+        - name: FLUENT_UID
+          value: "0"
+        - name: FLUENTD_SYSTEMD_CONF
+          value: disable
+        
+        resources:
+          requests:
+            memory: "200Mi"
+            cpu: "100m"
+          limits:
+            memory: "400Mi"
+            cpu: "200m"
+        
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluentd-config
+          mountPath: /fluentd/etc
+      
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluentd-config
+        configMap:
+          name: fluentd-config
+
+---
+# 2. NODE MONITORING (Node Exporter)
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+  labels:
+    app: node-exporter
+    tier: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+        tier: monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      hostNetwork: true
+      hostPID: true
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:v1.6.1
+        
+        args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/host/root
+        - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+        
+        ports:
+        - name: metrics
+          containerPort: 9100
+          hostPort: 9100
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: root
+          mountPath: /host/root
+          readOnly: true
+          mountPropagation: HostToContainer
+      
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: root
+        hostPath:
+          path: /
+
+---
+# 3. NETWORK POLICY AGENT (Calico)
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: calico-node
+  namespace: kube-system
+  labels:
+    app: calico-node
+spec:
+  selector:
+    matchLabels:
+      app: calico-node
+  
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  
+  template:
+    metadata:
+      labels:
+        app: calico-node
+    spec:
+      hostNetwork: true
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      
+      serviceAccountName: calico-node
+      
+      priorityClassName: system-node-critical
+      
+      initContainers:
+      - name: install-cni
+        image: calico/cni:v3.26.0
+        command: ["/opt/cni/bin/install"]
+        env:
+        - name: CNI_CONF_NAME
+          value: "10-calico.conflist"
+        - name: CNI_NETWORK_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: calico-config
+              key: cni_network_config
+        volumeMounts:
+        - name: cni-bin-dir
+          mountPath: /host/opt/cni/bin
+        - name: cni-net-dir
+          mountPath: /host/etc/cni/net.d
+      
+      containers:
+      - name: calico-node
+        image: calico/node:v3.26.0
+        
+        env:
+        - name: DATASTORE_TYPE
+          value: "kubernetes"
+        - name: WAIT_FOR_DATASTORE
+          value: "true"
+        - name: NODENAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CALICO_NETWORKING_BACKEND
+          value: "bird"
+        - name: CLUSTER_TYPE
+          value: "k8s,bgp"
+        - name: IP
+          value: "autodetect"
+        - name: CALICO_IPV4POOL_IPIP
+          value: "Always"
+        - name: FELIX_IPINIPMTU
+          value: "1440"
+        - name: CALICO_IPV4POOL_CIDR
+          value: "192.168.0.0/16"
+        - name: FELIX_LOGSEVERITYSCREEN
+          value: "info"
+        - name: FELIX_HEALTHENABLED
+          value: "true"
+        
+        securityContext:
+          privileged: true
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        livenessProbe:
+          httpGet:
+            path: /liveness
+            port: 9099
+          periodSeconds: 10
+          initialDelaySeconds: 10
+          failureThreshold: 6
+        
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 9099
+          periodSeconds: 10
+        
+        volumeMounts:
+        - name: lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+        - name: var-run-calico
+          mountPath: /var/run/calico
+        - name: var-lib-calico
+          mountPath: /var/lib/calico
+        - name: xtables-lock
+          mountPath: /run/xtables.lock
+      
+      volumes:
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: var-run-calico
+        hostPath:
+          path: /var/run/calico
+      - name: var-lib-calico
+        hostPath:
+          path: /var/lib/calico
+      - name: xtables-lock
+        hostPath:
+          path: /run/xtables.lock
+          type: FileOrCreate
+      - name: cni-bin-dir
+        hostPath:
+          path: /opt/cni/bin
+      - name: cni-net-dir
+        hostPath:
+          path: /etc/cni/net.d
+
+---
+# 4. SECURITY MONITORING (Falco)
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: security
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      hostNetwork: true
+      hostPID: true
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      
+      serviceAccountName: falco
+      
+      containers:
+      - name: falco
+        image: falcosecurity/falco:0.35.1
+        
+        args:
+        - /usr/bin/falco
+        - --cri
+        - /run/containerd/containerd.sock
+        - -K
+        - /var/run/secrets/kubernetes.io/serviceaccount/token
+        - -k
+        - https://kubernetes.default
+        - -pk
+        
+        securityContext:
+          privileged: true
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        
+        volumeMounts:
+        - name: dev-fs
+          mountPath: /host/dev
+        - name: proc-fs
+          mountPath: /host/proc
+          readOnly: true
+        - name: boot-fs
+          mountPath: /host/boot
+          readOnly: true
+        - name: lib-modules
+          mountPath: /host/lib/modules
+          readOnly: true
+        - name: usr-fs
+          mountPath: /host/usr
+          readOnly: true
+        - name: etc-fs
+          mountPath: /host/etc
+          readOnly: true
+        - name: containerd-socket
+          mountPath: /run/containerd/containerd.sock
+        - name: falco-config
+          mountPath: /etc/falco
+      
+      volumes:
+      - name: dev-fs
+        hostPath:
+          path: /dev
+      - name: proc-fs
+        hostPath:
+          path: /proc
+      - name: boot-fs
+        hostPath:
+          path: /boot
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: usr-fs
+        hostPath:
+          path: /usr
+      - name: etc-fs
+        hostPath:
+          path: /etc
+      - name: containerd-socket
+        hostPath:
+          path: /run/containerd/containerd.sock
+      - name: falco-config
+        configMap:
+          name: falco-config
+
+---
+# 5. NVIDIA GPU DEVICE PLUGIN
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin
+  
+  updateStrategy:
+    type: RollingUpdate
+  
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin
+    spec:
+      # Only run on nodes with GPUs
+      nodeSelector:
+        accelerator: nvidia-gpu
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      
+      priorityClassName: system-node-critical
+      
+      containers:
+      - name: nvidia-device-plugin-ctr
+        image: nvcr.io/nvidia/k8s-device-plugin:v0.14.0
+        
+        env:
+        - name: FAIL_ON_INIT_ERROR
+          value: "false"
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+      
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins
+
+---
+# ServiceAccounts
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: kube-system
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: calico-node
+  namespace: kube-system
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: security

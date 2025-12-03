@@ -1,0 +1,584 @@
+# Storage Examples - PV, PVC, StorageClass
+
+---
+# 1. STORAGE CLASS - Fast SSD
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/aws-ebs  # Change based on cloud provider
+parameters:
+  type: gp3
+  iopsPerGB: "50"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# 2. STORAGE CLASS - Standard HDD
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-hdd
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: st1
+  fsType: ext4
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Retain  # Keep data after PVC deletion
+
+---
+# 3. STORAGE CLASS - NFS
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-storage
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: nfs-server.example.com
+  share: /exported/path
+mountOptions:
+  - hard
+  - nfsvers=4.1
+volumeBindingMode: Immediate
+reclaimPolicy: Retain
+
+---
+# 4. PERSISTENT VOLUME - Manual Provisioning
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-manual-001
+  labels:
+    type: local
+    environment: production
+spec:
+  capacity:
+    storage: 100Gi
+  
+  volumeMode: Filesystem
+  
+  accessModes:
+  - ReadWriteOnce
+  
+  persistentVolumeReclaimPolicy: Retain
+  
+  storageClassName: manual
+  
+  # Local storage (for testing)
+  local:
+    path: /mnt/data
+  
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - node-1
+
+---
+# 5. PERSISTENT VOLUME - NFS
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-nfs-001
+spec:
+  capacity:
+    storage: 500Gi
+  
+  accessModes:
+  - ReadWriteMany  # Multiple pods can read/write
+  
+  persistentVolumeReclaimPolicy: Retain
+  
+  storageClassName: nfs-storage
+  
+  nfs:
+    server: nfs-server.example.com
+    path: /exports/shared
+  
+  mountOptions:
+  - hard
+  - nfsvers=4.1
+
+---
+# 6. PERSISTENT VOLUME CLAIM - Database
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: production
+  labels:
+    app: postgres
+    tier: database
+spec:
+  accessModes:
+  - ReadWriteOnce
+  
+  storageClassName: fast-ssd
+  
+  resources:
+    requests:
+      storage: 50Gi
+  
+  # Optional: Selector to bind to specific PV
+  selector:
+    matchLabels:
+      environment: production
+
+---
+# 7. PERSISTENT VOLUME CLAIM - Shared Storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-storage-pvc
+  namespace: production
+spec:
+  accessModes:
+  - ReadWriteMany  # Multiple pods can access
+  
+  storageClassName: nfs-storage
+  
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# 8. PERSISTENT VOLUME CLAIM - Backup Storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: production
+  labels:
+    app: backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  
+  storageClassName: standard-hdd  # Cheaper storage for backups
+  
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+# 9. POD USING PVC - Database Example
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-with-storage
+  namespace: production
+spec:
+  containers:
+  - name: postgres
+    image: postgres:15-alpine
+    
+    env:
+    - name: POSTGRES_DB
+      value: mydb
+    - name: POSTGRES_USER
+      value: admin
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgres-secret
+          key: password
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pgdata
+    
+    ports:
+    - containerPort: 5432
+    
+    volumeMounts:
+    - name: postgres-storage
+      mountPath: /var/lib/postgresql/data
+    
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+  
+  volumes:
+  - name: postgres-storage
+    persistentVolumeClaim:
+      claimName: postgres-pvc
+
+---
+# 10. STATEFULSET WITH VOLUME CLAIM TEMPLATE
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  serviceName: elasticsearch
+  replicas: 3
+  
+  selector:
+    matchLabels:
+      app: elasticsearch
+  
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+        
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        
+        env:
+        - name: cluster.name
+          value: "k8s-logs"
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: discovery.seed_hosts
+          value: "elasticsearch-0.elasticsearch,elasticsearch-1.elasticsearch,elasticsearch-2.elasticsearch"
+        - name: cluster.initial_master_nodes
+          value: "elasticsearch-0,elasticsearch-1,elasticsearch-2"
+        - name: ES_JAVA_OPTS
+          value: "-Xms512m -Xmx512m"
+        
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/elasticsearch/data
+  
+  # VolumeClaimTemplate - Creates PVC for each pod
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 30Gi
+
+---
+# 11. VOLUME SNAPSHOT CLASS
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: csi-snapclass
+driver: ebs.csi.aws.com  # Change based on CSI driver
+deletionPolicy: Delete
+parameters:
+  tagSpecification_1: "Name=snapshot-{{ .SnapshotName }}"
+
+---
+# 12. VOLUME SNAPSHOT
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: postgres-snapshot-001
+  namespace: production
+spec:
+  volumeSnapshotClassName: csi-snapclass
+  source:
+    persistentVolumeClaimName: postgres-pvc
+
+---
+# 13. RESTORE FROM SNAPSHOT
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc-restored
+  namespace: production
+spec:
+  accessModes:
+  - ReadWriteOnce
+  
+  storageClassName: fast-ssd
+  
+  resources:
+    requests:
+      storage: 50Gi
+  
+  # Restore from snapshot
+  dataSource:
+    name: postgres-snapshot-001
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+
+---
+# 14. CONFIGMAP AS VOLUME
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      host: 0.0.0.0
+    database:
+      host: postgres-service
+      port: 5432
+  app.properties: |
+    app.name=MyApp
+    app.version=1.0.0
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-config
+  namespace: production
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    # Mount entire ConfigMap
+    - name: config-volume
+      mountPath: /etc/config
+    
+    # Mount specific key as file
+    - name: config-volume
+      mountPath: /etc/app/config.yaml
+      subPath: config.yaml
+  
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+      defaultMode: 0644
+
+---
+# 15. SECRET AS VOLUME
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: production
+type: Opaque
+stringData:
+  database-password: "SuperSecret123!"
+  api-key: "sk-1234567890abcdef"
+  tls.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIDXTCCAkWgAwIBAgIJAKL...
+    -----END CERTIFICATE-----
+  tls.key: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0...
+    -----END PRIVATE KEY-----
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-secrets
+  namespace: production
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    # Mount secrets as files
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+    
+    # Mount TLS certificates
+    - name: tls-volume
+      mountPath: /etc/tls
+      readOnly: true
+  
+  volumes:
+  - name: secret-volume
+    secret:
+      secretName: app-secrets
+      defaultMode: 0400  # Read-only for owner
+      items:
+      - key: database-password
+        path: db-password
+      - key: api-key
+        path: api-key
+  
+  - name: tls-volume
+    secret:
+      secretName: app-secrets
+      items:
+      - key: tls.crt
+        path: tls.crt
+      - key: tls.key
+        path: tls.key
+
+---
+# 16. EMPTYDIR - Temporary Storage
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-emptydir
+  namespace: production
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21-alpine
+    
+    volumeMounts:
+    - name: cache
+      mountPath: /cache
+    - name: tmp
+      mountPath: /tmp
+  
+  volumes:
+  # EmptyDir - deleted when pod is removed
+  - name: cache
+    emptyDir:
+      sizeLimit: 1Gi
+  
+  # EmptyDir with memory backing (tmpfs)
+  - name: tmp
+    emptyDir:
+      medium: Memory
+      sizeLimit: 500Mi
+
+---
+# 17. HOSTPATH - Node Storage (Use with caution!)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-hostpath
+  namespace: production
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    - name: host-logs
+      mountPath: /var/log/app
+  
+  volumes:
+  - name: host-logs
+    hostPath:
+      path: /var/log/myapp
+      type: DirectoryOrCreate
+
+---
+# 18. PROJECTED VOLUME - Combine Multiple Sources
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-projected-volume
+  namespace: production
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    - name: all-in-one
+      mountPath: /projected-volume
+      readOnly: true
+  
+  volumes:
+  - name: all-in-one
+    projected:
+      sources:
+      # Service account token
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 7200
+      
+      # ConfigMap
+      - configMap:
+          name: app-config
+          items:
+          - key: config.yaml
+            path: config.yaml
+      
+      # Secret
+      - secret:
+          name: app-secrets
+          items:
+          - key: api-key
+            path: api-key
+      
+      # Downward API
+      - downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: "annotations"
+            fieldRef:
+              fieldPath: metadata.annotations

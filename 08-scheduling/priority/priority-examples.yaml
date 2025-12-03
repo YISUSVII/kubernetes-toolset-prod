@@ -1,0 +1,36 @@
+# Priority Class Examples
+
+---
+# 1. HIGH PRIORITY CLASS
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000
+globalDefault: false
+description: "This priority class should be used for XYZ service pods only."
+
+---
+# 2. LOW PRIORITY CLASS
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 1000
+globalDefault: false
+description: "This priority class should be used for batch jobs."
+
+---
+# 3. POD USING PRIORITY CLASS
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: high-priority-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+  priorityClassName: high-priority

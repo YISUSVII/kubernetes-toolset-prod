@@ -1,0 +1,403 @@
+# Network Policy Examples - Zero Trust Security
+
+---
+# 1. Default Deny All Traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: production
+spec:
+  podSelector: {}  # Applies to all pods in namespace
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# 2. Allow DNS Resolution (Required for most applications)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# 3. Frontend Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-netpol
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+      tier: frontend
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Incoming traffic rules
+  ingress:
+  # Allow from Ingress Controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  
+  # Allow from monitoring (Prometheus)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  # Outgoing traffic rules
+  egress:
+  # Allow to API backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: api
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow to external HTTPS (for CDN, external APIs)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# 4. API Backend Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-backend-netpol
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+      tier: backend
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow from frontend
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow from other API pods (for internal communication)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  egress:
+  # Allow to database
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+          tier: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow to Redis cache
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+          tier: cache
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow to external APIs (HTTPS)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# 5. Database Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-netpol
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+      tier: database
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Only allow from API backend
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow from backup jobs
+  - from:
+    - podSelector:
+        matchLabels:
+          app: backup
+          type: job
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9187  # postgres-exporter
+  
+  egress:
+  # Allow DNS only
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow to other database pods (for replication)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+          tier: database
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# 6. Redis Cache Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-netpol
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+      tier: cache
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow from API backend
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9121  # redis-exporter
+  
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow to other Redis pods (for clustering)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+          tier: cache
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379  # cluster bus
+
+---
+# 7. Cross-Namespace Policy (Allow from specific namespace)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-staging
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: shared-service
+  
+  policyTypes:
+  - Ingress
+  
+  ingress:
+  - from:
+    # Allow from staging namespace
+    - namespaceSelector:
+        matchLabels:
+          environment: staging
+    # Only from specific pods
+    - podSelector:
+        matchLabels:
+          app: integration-tests
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# 8. IP Block Policy (Allow from specific IP ranges)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-office
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: admin-panel
+  
+  policyTypes:
+  - Ingress
+  
+  ingress:
+  - from:
+    # Allow from office IP range
+    - ipBlock:
+        cidr: 203.0.113.0/24
+        except:
+        - 203.0.113.1/32  # Exclude specific IP
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# 9. Egress to External Services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-apis
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  
+  policyTypes:
+  - Egress
+  
+  egress:
+  # Allow to specific external IPs (e.g., payment gateway)
+  - to:
+    - ipBlock:
+        cidr: 198.51.100.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow to any HTTPS (less restrictive)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443

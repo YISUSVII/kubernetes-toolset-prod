@@ -1,0 +1,48 @@
+# Resource Quota Examples
+
+---
+# 1. COMPUTE RESOURCE QUOTA
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: default
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+
+---
+# 2. OBJECT COUNT QUOTA
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: object-quota
+  namespace: default
+spec:
+  hard:
+    configmaps: "10"
+    persistentvolumeclaims: "4"
+    pods: "4"
+    replicationcontrollers: "20"
+    secrets: "10"
+    services: "10"
+    services.loadbalancers: "2"
+
+---
+# 3. STORAGE QUOTA
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: storage-quota
+spec:
+  hard:
+    requests.storage: "50Gi"
+    persistentvolumeclaims: "10"
+    # Quota for specific storage class
+    ssd-storage-class.storageclass.storage.k8s.io/requests.storage: "10Gi"

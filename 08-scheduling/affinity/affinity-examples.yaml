@@ -1,0 +1,87 @@
+# Affinity and Anti-Affinity Examples
+
+---
+# 1. NODE AFFINITY (Hard & Soft)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-node-affinity
+spec:
+  affinity:
+    nodeAffinity:
+      # Hard requirement: Must run on node with specific label
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values:
+            - us-east-1a
+            - us-east-1b
+      
+      # Soft requirement: Prefer to run on specific nodes
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: disk-type
+            operator: In
+            values:
+            - ssd
+  containers:
+  - name: with-node-affinity
+    image: k8s.gcr.io/pause:2.0
+
+---
+# 2. POD ANTI-AFFINITY (Spread across nodes)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-store
+  template:
+    metadata:
+      labels:
+        app: web-store
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - web-store
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: web-app
+        image: nginx:1.16-alpine
+
+---
+# 3. POD AFFINITY (Co-locate pods)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-pod-affinity
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: security
+            operator: In
+            values:
+            - S1
+        topologyKey: "topology.kubernetes.io/zone"
+  containers:
+  - name: with-pod-affinity
+    image: k8s.gcr.io/pause:2.0

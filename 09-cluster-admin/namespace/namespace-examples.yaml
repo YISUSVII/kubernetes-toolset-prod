@@ -1,0 +1,39 @@
+# Namespace Examples
+
+---
+# 1. SIMPLE NAMESPACE
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: development
+  labels:
+    name: development
+    environment: dev
+
+---
+# 2. NAMESPACE WITH RESOURCE QUOTA
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    name: production
+    environment: prod
+    # Pod Security Admission labels
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# 3. NAMESPACE WITH NETWORK POLICIES (Example Structure)
+# Note: NetworkPolicy resources are separate, but this NS is designed for isolation
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-isolated
+  labels:
+    network-policy: strict
+    access: restricted

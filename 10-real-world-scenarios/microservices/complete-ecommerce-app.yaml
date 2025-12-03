@@ -1,0 +1,772 @@
+# Complete Microservices E-Commerce Application
+# This demonstrates a production-ready microservices architecture
+
+---
+# NAMESPACE
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecommerce
+  labels:
+    name: ecommerce
+    environment: production
+
+---
+# FRONTEND SERVICE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ecommerce
+  labels:
+    app: frontend
+    tier: presentation
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: presentation
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        env:
+        - name: API_GATEWAY_URL
+          value: "http://api-gateway:8080"
+        - name: NODE_ENV
+          value: "production"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ecommerce
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# API GATEWAY
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: ecommerce
+  labels:
+    app: api-gateway
+    tier: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: api
+    spec:
+      serviceAccountName: api-gateway-sa
+      containers:
+      - name: api-gateway
+        image: myregistry.io/api-gateway:1.0.0
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: USER_SERVICE_URL
+          value: "http://user-service:8080"
+        - name: PRODUCT_SERVICE_URL
+          value: "http://product-service:8080"
+        - name: ORDER_SERVICE_URL
+          value: "http://order-service:8080"
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: REDIS_PORT
+          value: "6379"
+        envFrom:
+        - secretRef:
+            name: api-gateway-secrets
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: ecommerce
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway-sa
+  namespace: ecommerce
+
+---
+# USER SERVICE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: ecommerce
+  labels:
+    app: user-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        tier: backend
+    spec:
+      initContainers:
+      - name: wait-for-db
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for db; sleep 2; done;']
+      containers:
+      - name: user-service
+        image: myregistry.io/user-service:1.0.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: DATABASE_HOST
+          value: "postgres-service"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "users_db"
+        - name: REDIS_HOST
+          value: "redis-service"
+        envFrom:
+        - secretRef:
+            name: user-service-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: user-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# PRODUCT SERVICE (MongoDB)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: ecommerce
+  labels:
+    app: product-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+        tier: backend
+    spec:
+      containers:
+      - name: product-service
+        image: myregistry.io/product-service:1.0.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: MONGODB_HOST
+          value: "mongodb-service"
+        - name: MONGODB_PORT
+          value: "27017"
+        - name: MONGODB_DATABASE
+          value: "products"
+        envFrom:
+        - secretRef:
+            name: product-service-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: product-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# ORDER SERVICE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: ecommerce
+  labels:
+    app: order-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+        tier: backend
+    spec:
+      containers:
+      - name: order-service
+        image: myregistry.io/order-service:1.0.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: DATABASE_HOST
+          value: "postgres-service"
+        - name: RABBITMQ_HOST
+          value: "rabbitmq-service"
+        - name: PAYMENT_SERVICE_URL
+          value: "http://payment-service:8080"
+        envFrom:
+        - secretRef:
+            name: order-service-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: order-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# REDIS CACHE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ecommerce
+  labels:
+    app: redis
+    tier: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+
+---
+# POSTGRESQL DATABASE
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: ecommerce
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: "ecommerce"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# MONGODB
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: ecommerce
+spec:
+  serviceName: mongodb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+        tier: database
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:6
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: mongodb-storage
+          mountPath: /data/db
+        livenessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# SECRETS
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: ecommerce
+type: Opaque
+stringData:
+  username: postgres
+  password: "ChangeMe123!"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-secret
+  namespace: ecommerce
+type: Opaque
+stringData:
+  username: admin
+  password: "ChangeMe123!"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-gateway-secrets
+  namespace: ecommerce
+type: Opaque
+stringData:
+  JWT_SECRET: "super-secret-jwt-key-change-me"
+  API_KEY: "api-key-for-external-services"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-service-secrets
+  namespace: ecommerce
+type: Opaque
+stringData:
+  DATABASE_PASSWORD: "ChangeMe123!"
+  JWT_SECRET: "super-secret-jwt-key-change-me"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: product-service-secrets
+  namespace: ecommerce
+type: Opaque
+stringData:
+  MONGODB_PASSWORD: "ChangeMe123!"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: order-service-secrets
+  namespace: ecommerce
+type: Opaque
+stringData:
+  DATABASE_PASSWORD: "ChangeMe123!"
+  RABBITMQ_PASSWORD: "ChangeMe123!"
+
+---
+# INGRESS
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ecommerce-ingress
+  namespace: ecommerce
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+spec:
+  tls:
+  - hosts:
+    - ecommerce.example.com
+    - api.ecommerce.example.com
+    secretName: ecommerce-tls
+  rules:
+  - host: ecommerce.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+  - host: api.ecommerce.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 8080
+
+---
+# HORIZONTAL POD AUTOSCALER
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: ecommerce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# POD DISRUPTION BUDGET
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  namespace: ecommerce
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: api-gateway

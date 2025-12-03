@@ -1,0 +1,56 @@
+# Storage Class Examples
+
+---
+# 1. AWS EBS GP3
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+
+---
+# 2. GOOGLE CLOUD STANDARD
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-gke
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-standard
+  replication-type: none
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+
+---
+# 3. AZURE DISK
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-disk
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: StandardSSD_LRS
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+
+---
+# 4. LOCAL STORAGE (No Provisioner)
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer

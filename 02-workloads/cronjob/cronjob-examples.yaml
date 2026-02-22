@@ -15,7 +15,7 @@ spec:
   # Schedule: Every day at 2 AM
   schedule: "0 2 * * *"
   
-  # Timezone (requires Kubernetes 1.25+)
+  # Timezone (stable since Kubernetes 1.27)
   timeZone: "America/New_York"
   
   # Keep last 3 successful and 1 failed job

@@ -88,3 +88,25 @@ spec:
   ports:
   - port: 27017
     targetPort: 27017
+
+---
+# 6. TRAFFIC DISTRIBUTION (Topology-aware routing, GA in v1.35)
+# PreferSameZone: routes traffic to endpoints in the same zone when available
+# PreferSameNode: routes traffic to endpoints on the same node when available
+# NOTE: PreferClose is deprecated in v1.35; use PreferSameZone instead
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zone-aware-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  trafficDistribution: PreferSameZone  # Prefer endpoints in the same zone (replaces deprecated PreferClose)

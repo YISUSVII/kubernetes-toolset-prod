@@ -43,3 +43,28 @@ spec:
     operator: "Exists"
     effect: "NoExecute"
     tolerationSeconds: 6000 # Stay for 6000s after node becomes unreachable
+
+---
+# 3. NUMERIC COMPARISON TOLERATIONS (New in v1.35)
+# Gt (Greater Than) and Lt (Less Than) operators allow numeric comparisons
+# Useful for tolerating taints that represent numeric thresholds (e.g., battery level, temperature)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: numeric-toleration-demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+  tolerations:
+  # Tolerate nodes where battery-level taint value is greater than 20
+  - key: "battery-level"
+    operator: "Gt"
+    value: "20"
+    effect: "NoSchedule"
+  # Tolerate nodes where temperature taint value is less than 80
+  - key: "temperature"
+    operator: "Lt"
+    value: "80"
+    effect: "NoSchedule"

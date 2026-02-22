@@ -31,6 +31,24 @@ Services enable network access to a set of Pods. They provide stable endpoints f
 - Direct pod DNS records
 - **Use case**: StatefulSets, service discovery
 
+### 6. **Traffic Distribution** (GA in v1.35)
+- `trafficDistribution: PreferSameZone` — prefer endpoints in the same zone (GA in v1.35)
+- `trafficDistribution: PreferSameNode` — prefer endpoints on the same node (GA in v1.35)
+- **Deprecation**: `PreferClose` is deprecated in v1.35; use `PreferSameZone` instead
+- **Use case**: Reduce cross-zone traffic costs, improve latency
+
+## kube-proxy Deprecation Notice (v1.35)
+
+> **⚠️ Deprecated**: The `ipvs` mode in kube-proxy is deprecated as of v1.35 and will be removed in a future version.
+> Users should migrate to the `nftables` mode. The `iptables` mode remains supported.
+>
+> **Migration steps**:
+> 1. Update your kube-proxy ConfigMap: set `mode: nftables` under `data.config.conf`
+> 2. Restart the kube-proxy DaemonSet: `kubectl rollout restart daemonset/kube-proxy -n kube-system`
+> 3. Verify with: `kubectl get configmap kube-proxy -n kube-system -o yaml`
+>
+> The `nftables` backend offers better performance and is the strategic direction for kube-proxy networking.
+
 ## Ingress
 
 Manages external HTTP/HTTPS access to services. Features:

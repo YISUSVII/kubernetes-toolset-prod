@@ -44,7 +44,7 @@ kubernetes-toolset-prod/
 
 ### Prerequisites
 
-- Kubernetes cluster (v1.24+)
+- Kubernetes cluster (v1.35+)
 - `kubectl` CLI installed
 - Basic understanding of Kubernetes concepts
 
@@ -159,6 +159,27 @@ Each directory contains:
 ├── best-practices.md           # Deployment best practices
 └── troubleshooting.md          # Common issues
 ```
+
+## Kubernetes v1.35 Notable Changes
+
+This toolset targets **Kubernetes v1.35**. Key changes in v1.35 that affect these examples:
+
+### API Changes & Promotions
+- **`trafficDistribution: PreferSameZone` / `PreferSameNode`** — Graduated to GA; examples updated in `03-services-networking/service/`
+- **`MaxUnavailableStatefulSet`** — Promoted to beta (enabled by default); `maxUnavailable` field added to StatefulSet rolling update examples
+- **Toleration `Gt` / `Lt` operators** — New numeric comparison operators; examples added to `08-scheduling/taints-tolerations/`
+- **`terminatingReplicas`** — Deployment and ReplicaSet status field promoted to beta (enabled by default)
+- **`HPAConfigurableTolerance`** — Promoted to beta (enabled by default)
+
+### Deprecations (Action Required)
+- **`trafficDistribution: PreferClose`** — Deprecated in v1.35; use `PreferSameZone` instead
+- **kube-proxy `ipvs` mode** — Deprecated in v1.35; migrate to `nftables` mode
+- **cgroup v1** — Deprecated in v1.35; `failCgroupV1: true` is the default. Nodes running cgroup v1 with kubelet v1.35+ will fail to start unless `failCgroupV1: false` is explicitly set. Migrate to cgroup v2.
+
+### Removed APIs (Breaking Changes)
+- **`StorageVersionMigration` v1alpha1** — Removed; use `v1beta1` instead (ACTION REQUIRED before upgrade)
+- **`--pod-infra-container-image` kubelet flag** — Removed; remove from kubelet configuration before upgrading (ACTION REQUIRED)
+
 
 ## Learning Path
 

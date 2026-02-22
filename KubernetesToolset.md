@@ -4,7 +4,7 @@
 
 Before using these examples, ensure you have:
 
-1. **Kubernetes Cluster** (v1.24+)
+1. **Kubernetes Cluster** (v1.35+)
    - Minikube (local development)
    - Kind (Kubernetes in Docker)
    - Cloud provider (GKE, EKS, AKS)
@@ -15,7 +15,7 @@ Before using these examples, ensure you have:
    # Check version
    kubectl version --client
    
-   # Should be v1.24 or higher
+   # Should be v1.35 or higher
    ```
 
 3. **Cluster Access**

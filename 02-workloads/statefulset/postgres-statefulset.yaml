@@ -34,7 +34,8 @@ spec:
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
-      partition: 0  # All pods will be updated
+      partition: 0       # All pods will be updated
+      maxUnavailable: 1  # Allow 1 pod unavailable during update (beta in v1.35)
   
   selector:
     matchLabels:
